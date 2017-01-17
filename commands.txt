@@ -1,0 +1,59 @@
+# Create StatefulSet
+kubectl create -f zookeeper.yaml
+
+# Get the status of pods
+kubectl get pods -w -l app=zk
+
+# ** Facilitate Leader Election **
+
+# Unique identifiers for every container
+for i in 0 1 2; do kubectl exec zk-$i -- hostname; done
+for i in 0 1 2; do kubectl exec zk-$i -- hostname -f; done
+# Check the content of myid file
+for i in 0 1 2; do echo "myid zk-$i";kubectl exec zk-$i -- cat /var/lib/zookeeper/data/myid; done
+
+# Verify correctness of ZooKeeper config file
+kubectl exec zk-0 -- cat /opt/zookeeper/conf/zoo.cfg
+
+# ** Basic Sanity Check **
+kubectl exec zk-0 zkCli.sh create /hello world
+kubectl exec zk-1 zkCli.sh get /hello
+kubectl exec zk-2 zkCli.sh get /hello
+
+# ** Providing Durable Storage **
+kubectl delete statefulset zk
+get pods -w -l app=zk
+kubectl apply -f zookeeper.yaml
+kubectl exec zk-2 zkCli.sh get /hello
+
+# ** Ensuring Consistent Configuration **
+kubectl get cm zk-config -o yaml
+for i in 0 1 2; do kubectl exec zk-$i env | grep ZK_*;echo""; done
+
+# ** Configuring Logging **
+kubectl exec zk-0 cat /usr/etc/zookeeper/log4j.properties
+kubectl logs zk-0 --tail 20
+
+# ** Configuring a Non-Privileged User **
+kubectl exec zk-0 -- ps -elf
+
+# ** Managing the ZooKeeper Process **
+kubectl exec zk-0 -- ps -ef
+kubectl get pod -w -l app=zk
+kubectl exec zk-0 -- pkill java
+
+# **Testing for Liveness **
+kubectl get pod -w -l app=zk
+kubectl exec zk-0 -- rm /opt/zookeeper/bin/zkOk.sh
+
+# **Tolerating Node Failure **
+for i in 0 1 2; do kubectl get pod zk-$i --template {{.spec.nodeName}}; echo : zk-$i ""; done
+# refer to PodAntiAffinity annotation
+
+# ** Surviving Maintenance **
+kubectl get poddisruptionbudget zk-budget
+kubectl get pod -w -l app=zk
+kubectl drain $(kubectl get pod zk-0 --template {{.spec.nodeName}}) --ignore-daemonsets --force --delete-local-data
+kubectl drain $(kubectl get pod zk-1 --template {{.spec.nodeName}}) --ignore-daemonsets --force --delete-local-data
+kubectl drain $(kubectl get pod zk-2 --template {{.spec.nodeName}}) --ignore-daemonsets --force --delete-local-data
+kubectl uncordon
